@@ -1,17 +1,20 @@
 package com.walmart.platform.exp.smartcomm.client;
 
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import com.walmart.platform.exp.client.ae.context.Context;
 import com.walmart.platform.exp.client.ae.context.IExpoAssignmentEngine;
+import com.walmart.platform.exp.client.ae.context.IPostAssignment;
 import com.walmart.platform.exp.client.ae.context.IPropertiesProvider;
 import com.walmart.platform.exp.client.ae.context.model.AssignmentTreatment;
 import com.walmart.platform.exp.client.ae.metadata.model.ExpoAssignmentMetadata;
 
 public class ExpoAEClient {
     private IExpoAssignmentEngine expoAssignmentEngine;
+    private Iterator<IPostAssignment> postAssignmentProviders;
     private IPropertiesProvider propertiesProvider;
     
     private ExpoAEClient() {
@@ -20,7 +23,8 @@ public class ExpoAEClient {
             .orElse( new IExpoAssignmentEngine(){} );
 
         this.propertiesProvider = Optional.ofNullable(loadProvider(IPropertiesProvider.class))
-                .orElse( null );        
+                .orElse( null );    
+        this.postAssignmentProviders = loadProviders(IPostAssignment.class);
     }
     
     public static ExpoAEClient getInstance(){
@@ -28,29 +32,29 @@ public class ExpoAEClient {
     }
     
     public AssignmentTreatment getAssignmentTreatment(String cid) {
+        return getAssignmentTreatment(cid, new Context(){});
+    }
+    
+    public AssignmentTreatment getAssignmentTreatment(String cid, Context ctx) {
         AssignmentTreatment assignmentTreatment = new AssignmentTreatment();
         try {
-            AssignmentTreatment override = expoAssignmentEngine
+            assignmentTreatment = expoAssignmentEngine
                                                 .getAssignmentTreatment(new ExpoAssignmentMetadata(), cid)
                                                 .orElse( new AssignmentTreatment() );
-            assignmentTreatment.setAssignments(override.getAssignments());
-            Map<String,String> treatments = null;
             
             if (propertiesProvider != null) {
-                // set all defaults
-                treatments = propertiesProvider.getDefaultProperties();
-                if (override.getTreatments() != null && treatments != null && !treatments.isEmpty()) {
-                    for (Entry<String,String> entry : override.getTreatments().entrySet()) {
-                        if (treatments.containsKey( entry.getKey() )) {
-                            // overwrite it
-                            treatments.put(entry.getKey(), entry.getValue());
-                        }
-                    }
-                }
-            } else {
-                treatments = override.getTreatments();
+                Map<String, String> props = new HashMap<>(propertiesProvider.getDefaultProperties());
+                assignmentTreatment.getTreatments().keySet().retainAll( props.keySet() );
+                // override
+                props.putAll( assignmentTreatment.getTreatments() );
+                assignmentTreatment.setTreatments(props);
             }
-            assignmentTreatment.setTreatments( treatments );
+            
+            // process post assignment
+            while (postAssignmentProviders.hasNext()) {
+                IPostAssignment action = postAssignmentProviders.next();
+                action.execute(assignmentTreatment, ctx);
+            }
             
         } catch (Exception e) {
             e.printStackTrace();
@@ -63,11 +67,15 @@ public class ExpoAEClient {
     }
     
     private <T> T loadProvider(Class<T> clazz) {
-        ServiceLoader<T> loader = ServiceLoader.load(clazz);
-        Iterator<T> iterator = loader.iterator();
+        Iterator<T> iterator = loadProviders(clazz);
         if (iterator.hasNext() ) {
             return iterator.next();
         }
         return null;
+    }
+    
+    private <T> Iterator<T> loadProviders(Class<T> clazz) {
+        ServiceLoader<T> loader = ServiceLoader.load(clazz);
+        return loader.iterator();
     }
 }
