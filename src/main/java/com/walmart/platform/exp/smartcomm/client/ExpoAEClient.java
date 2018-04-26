@@ -42,18 +42,20 @@ public class ExpoAEClient {
                                                 .getAssignmentTreatment(new ExpoAssignmentMetadata(), cid)
                                                 .orElse( new AssignmentTreatment() );
             
+
+            // process post assignment
+            while (postAssignmentProviders.hasNext()) {
+                IPostAssignment action = postAssignmentProviders.next();
+                action.execute(assignmentTreatment, ctx);
+            }
+            
+            // retain only matched keys and override them
             if (propertiesProvider != null) {
                 Map<String, String> props = new HashMap<>(propertiesProvider.getDefaultProperties());
                 assignmentTreatment.getTreatments().keySet().retainAll( props.keySet() );
                 // override
                 props.putAll( assignmentTreatment.getTreatments() );
-                assignmentTreatment.setTreatments(props);
-            }
-            
-            // process post assignment
-            while (postAssignmentProviders.hasNext()) {
-                IPostAssignment action = postAssignmentProviders.next();
-                action.execute(assignmentTreatment, ctx);
+                assignmentTreatment.setTreatments(props);        
             }
             
         } catch (Exception e) {
