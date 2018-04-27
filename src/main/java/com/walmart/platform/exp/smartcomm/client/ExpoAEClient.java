@@ -1,10 +1,13 @@
 package com.walmart.platform.exp.smartcomm.client;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
+
 import com.walmart.platform.exp.client.ae.context.Context;
 import com.walmart.platform.exp.client.ae.context.IExpoAssignmentEngine;
 import com.walmart.platform.exp.client.ae.context.IPostAssignment;
@@ -13,18 +16,17 @@ import com.walmart.platform.exp.client.ae.context.model.AssignmentTreatment;
 import com.walmart.platform.exp.client.ae.metadata.model.ExpoAssignmentMetadata;
 
 public class ExpoAEClient {
-    private IExpoAssignmentEngine expoAssignmentEngine;
-    private Iterator<IPostAssignment> postAssignmentProviders;
+    private List<IExpoAssignmentEngine> expoAssignmentEngines;
+    private List<IPostAssignment> postAssignmentProviders;
     private IPropertiesProvider propertiesProvider;
     
     private ExpoAEClient() {
         // load up the implementation
-        this.expoAssignmentEngine = Optional.ofNullable(loadProvider(IExpoAssignmentEngine.class))
-            .orElse( new IExpoAssignmentEngine(){} );
+        this.expoAssignmentEngines = loadProviderList(IExpoAssignmentEngine.class);
 
         this.propertiesProvider = Optional.ofNullable(loadProvider(IPropertiesProvider.class))
                 .orElse( null );    
-        this.postAssignmentProviders = loadProviders(IPostAssignment.class);
+        this.postAssignmentProviders = loadProviderList(IPostAssignment.class);
     }
     
     public static ExpoAEClient getInstance(){
@@ -35,19 +37,27 @@ public class ExpoAEClient {
         return getAssignmentTreatment(cid, new Context(){});
     }
     
-    public AssignmentTreatment getAssignmentTreatment(String cid, Context ctx) {
+    public AssignmentTreatment getAssignmentTreatment(String cid, Context ctx) {       
         AssignmentTreatment assignmentTreatment = new AssignmentTreatment();
+        assignmentTreatment.setAssignments("");
+        assignmentTreatment.setTreatments(new HashMap<>());
         try {
-            assignmentTreatment = expoAssignmentEngine
-                                                .getAssignmentTreatment(new ExpoAssignmentMetadata(), cid)
-                                                .orElse( new AssignmentTreatment() );
-            
+            for (IExpoAssignmentEngine ae : expoAssignmentEngines) {
+                AssignmentTreatment at = ae.getAssignmentTreatment(new ExpoAssignmentMetadata(), cid).orElse(new AssignmentTreatment());
+                if (assignmentTreatment.getAssignments().isEmpty() &&
+                        at.getAssignments() != null && !at.getAssignments().isEmpty()) {
+                    assignmentTreatment.setAssignments(at.getAssignments());
+                }
+                if (assignmentTreatment.getTreatments().isEmpty() &&
+                        at.getTreatments() != null && !at.getTreatments().isEmpty()) {
+                    assignmentTreatment.setTreatments(at.getTreatments());
+                }
+            }
 
             // process post assignment
-            while (postAssignmentProviders.hasNext()) {
-                IPostAssignment action = postAssignmentProviders.next();
+            postAssignmentProviders.forEach( action -> {
                 action.execute(assignmentTreatment, ctx);
-            }
+            });
             
             // retain only matched keys and override them
             if (propertiesProvider != null) {
@@ -79,5 +89,16 @@ public class ExpoAEClient {
     private <T> Iterator<T> loadProviders(Class<T> clazz) {
         ServiceLoader<T> loader = ServiceLoader.load(clazz);
         return loader.iterator();
+    }
+    
+    private <T> List<T> loadProviderList(Class<T> clazz) {
+        Iterator<T> iterator = loadProviders(clazz);
+        List<T> l = new ArrayList<>();
+        while (iterator.hasNext()) {
+            T t = iterator.next();
+            l.add( t );
+            System.out.println("loading providers: " + t.getClass().getName());
+        }
+        return l;
     }
 }
